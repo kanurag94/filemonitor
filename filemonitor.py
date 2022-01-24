@@ -1,6 +1,7 @@
 #!/usr/bin/python
 
 from __future__ import print_function
+import json
 from bcc import BPF
 from ctypes import c_uint32
 
@@ -12,6 +13,7 @@ import cli
 
 BPF_C_PROG = "filemonitor.c"
 
+# initialize global variables
 def init():
     global BPF_C_PROG
     try:
@@ -20,6 +22,8 @@ def init():
     except:
         pass
 
+# update_inodemap function takes BPFHASH inodemap, config file as arguments
+# reads config file, finds the inode and updates inodemap
 def update_inodemap(inodemap, config_file):
     if not config_file:
         raise FileNotFoundError
@@ -30,9 +34,12 @@ def update_inodemap(inodemap, config_file):
         inode_id = get_inode_from_filepath(filepath.strip())
         if inode_id != "":
             inodemap[c_uint32(int(inode_id))] = c_uint32(int(inode_id))
-          
+
+# main function reads args and attaches bpf program
+# prints output of bpf events
 def main():
     args = cli.parser.parse_args()
+    noflags = cli.noflags(args)
 
     try:
         # initialize bpf program
@@ -43,11 +50,16 @@ def main():
         update_inodemap(b["inodemap"], args.file)
 
         # attach probes
-        b.attach_kprobe(event="vfs_read", fn_name="trace_read")
-        b.attach_kprobe(event="vfs_write", fn_name="trace_write")
-        b.attach_kprobe(event="vfs_rename", fn_name="trace_rename")
-        b.attach_kprobe(event="security_inode_create", fn_name="trace_create")
-        b.attach_kprobe(event="vfs_unlink", fn_name="trace_delete")
+        if noflags or args.read:
+            b.attach_kprobe(event="vfs_read", fn_name="trace_read")
+        if noflags or args.write:
+            b.attach_kprobe(event="vfs_write", fn_name="trace_write")
+        if noflags or args.rename:
+            b.attach_kprobe(event="vfs_rename", fn_name="trace_rename")
+        if noflags or args.create:
+            b.attach_kprobe(event="security_inode_create", fn_name="trace_create")
+        if noflags or args.delete:
+            b.attach_kprobe(event="vfs_unlink", fn_name="trace_delete")
 
         # header
         print("%-6s %-4s %-4s %-32s %-32s %-32s %-4s" % ("PID", "UID", "CPU", "PROC", "FPATH", "COMM", "OPRN"))
@@ -70,7 +82,8 @@ def main():
     except Exception as e:
         print("Exception occured, Are you root? Is BPF installed?", e)
 
-
+# get_inode_from_filepath takes a filepath as argument
+# and returns inode associated with that file path
 def get_inode_from_filepath(filepath):
   cmd = f'ls {filepath} 2>&1 1>/dev/null && ls -i {filepath}'
   cmd += ' | awk \'{print $1}\''
@@ -81,6 +94,7 @@ def get_inode_from_filepath(filepath):
   except:
       return ""
 
+# starts program
 if __name__ == "__main__":
     init()
     main()
