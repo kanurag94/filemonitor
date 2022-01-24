@@ -15,6 +15,8 @@ struct data_t {
 BPF_HASH(inodemap, u32, u32);
 BPF_PERF_OUTPUT(events);
 
+// common function takes dentry and operation name as arguments
+// looks up if inode exists in "inodemap" then trace and send event update
 static int common(struct pt_regs *ctx, struct dentry *de, char *OPRN) {
     if (de->d_name.len == 0) return 0;
 
@@ -45,7 +47,8 @@ static int common(struct pt_regs *ctx, struct dentry *de, char *OPRN) {
         return 0;
 }
 
-
+// trace_read function takes file, buffer and size as arguments
+// this is attached to file read (vfs_read) events
 int trace_read(struct pt_regs *ctx, struct file *file,
     char __user *buf, size_t count)
 {
@@ -55,6 +58,8 @@ int trace_read(struct pt_regs *ctx, struct file *file,
     return common(ctx, file->f_path.dentry, OPRN);
 }
 
+// trace_write function takes file, buffer and size as arguments
+// this is attached to file write (vfs_read) events
 int trace_write(struct pt_regs *ctx, struct file *file,
     char __user *buf, size_t count)
 {
@@ -64,6 +69,9 @@ int trace_write(struct pt_regs *ctx, struct file *file,
     return common(ctx, file->f_path.dentry, OPRN);
 }
 
+// trace_rename function takes old directory inode,
+// old dentry, new directory inode, new dentry as arguments
+// this is attached to file rename (vfs_rename) events
 int trace_rename(struct pt_regs *ctx, struct inode *old_dir,
  struct dentry *old_dentry, struct inode *new_dir,
  struct dentry *new_dentry)
@@ -72,12 +80,17 @@ int trace_rename(struct pt_regs *ctx, struct inode *old_dir,
     return common(ctx, old_dentry, OPRN);
 }
 
+// trace_write function takes old directory inode, dentry as arguments
+// this is attached to file create (security_inode_create) events
+// vfs_create is not fired by kernel > 4.8
 int trace_create(struct pt_regs *ctx, struct inode *dir, struct dentry *dentry)
 {
     char OPRN[10] = "CREATE";
     return common(ctx, dentry, OPRN);
 };
 
+// trace_write function takes old directory inode, dentry as arguments
+// this is attached to file unlinking(vfs_unlink) events to trace before deletion
 int trace_delete(struct pt_regs *ctx, struct inode *dir, struct dentry *dentry)
 {
     char OPRN[10] = "DELETE";
@@ -85,8 +98,9 @@ int trace_delete(struct pt_regs *ctx, struct inode *dir, struct dentry *dentry)
 }
 
 /*
-// KRETFUNC_PROBE function is triggered on process creation
+// KRETFUNC_PROBE probe is triggered on process creation
 // Linking it with file operation is hackish
+// TODO: Link with file events
 KRETFUNC_PROBE(__x64_sys_openat, struct pt_regs *regs, int ret)
 {
     struct data_t data = {};
