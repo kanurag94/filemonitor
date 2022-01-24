@@ -1,0 +1,1 @@
+sudo python3 /usr/local/etc/filemonitor/filemonitor.py "$@" 2>/dev/null
