@@ -2,6 +2,7 @@
 
 ebpf based Filemonitoring
 
+### Usage
 ```
 usage: filemonitor.py [-h] [-f FILE] [-r] [-w] [-p] [-c] [-d]
 
@@ -20,6 +21,17 @@ Example:
     ./filemonitor -r                         # traces read of /var/log/syslog
     ./filemonitor -f /path/to/config         # traces filepaths in path for all events
     ./filemonitor -f /path/to/config -d      # traces filepaths in path for delete events
+```
+
+### Output
+```
+PID    UID  CPU  PROC         FPATH                            COMM            OPRN
+11351  1000 1                 test_file_12.txt                 cat             READ
+11375  1000 1                 test_file_12.txt                 vi              READ
+11397  1000 0                 test_file_12.txt                 vi              READ
+11397  1000 0                 test_file_12.txt                 vi              WRITE
+11441  1000 0                 test_file_12.txt                 mv              RENAME
+11463  1000 0                 a                                rm              DELETE
 ```
 
 ## How to run?
