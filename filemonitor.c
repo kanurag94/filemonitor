@@ -1,12 +1,46 @@
 #include <uapi/linux/ptrace.h>
 #include <linux/fs.h>
+#include <linux/fs_struct.h>
 #include <linux/sched.h>
 
+#define EMBEDDED_LEVELS 2
+struct nameidata {
+	struct path	path;
+	struct qstr	last;
+	struct path	root;
+	struct inode	*inode; /* path.dentry.d_inode */
+	unsigned int	flags, state;
+	unsigned	seq, m_seq, r_seq;
+	int		last_type;
+	unsigned	depth;
+	int		total_link_count;
+	struct saved {
+		struct path link;
+		struct delayed_call done;
+		const char *name;
+		unsigned seq;
+	} *stack, internal[EMBEDDED_LEVELS];
+	struct filename	*name;
+	struct nameidata *saved;
+	unsigned	root_seq;
+	int		dfd;
+	kuid_t		dir_uid;
+	umode_t		dir_mode;
+} __randomize_layout;
+
+
+enum status_type {
+    LOOPING,
+    COMPLETE
+};
+
+#define MAXARG 128
 struct data_t {
     u32 pid;
     u32 uid;
+    enum status_type status;
     char pname[DNAME_INLINE_LEN];
-    char fname[DNAME_INLINE_LEN];
+    char fname[MAXARG];
     char comm[TASK_COMM_LEN];
     char otype[TASK_COMM_LEN];
 };
@@ -14,6 +48,15 @@ struct data_t {
 
 BPF_HASH(inodemap, u32, u32);
 BPF_PERF_OUTPUT(events);
+
+// bpf_probe_read_kernel takes bpf ctx, buffer (ptr) and data struct as input
+// sends a perf event and returns 1 status
+static int send_to_perf(struct pt_regs *ctx, char *ptr, struct data_t *data)
+{
+    bpf_probe_read_kernel(data->fname, sizeof(data->fname), ptr);
+    events.perf_submit(ctx, data, sizeof(struct data_t));
+    return 1;
+}
 
 // common function takes dentry and operation name as arguments
 // looks up if inode exists in "inodemap" then trace and send event update
@@ -28,21 +71,35 @@ static int common(struct pt_regs *ctx, struct dentry *de, char *OPRN) {
     
     return 0;
     RUN:;
+    
         struct data_t data = {};
+        data.status = LOOPING;
+
         // This doesn't work
         const char __user *processname = (char *)PT_REGS_PARM1(ctx);
+        struct task_struct *curr_task = (struct task_struct *)bpf_get_current_task();
 
         struct qstr d_name = de->d_name;
         if (d_name.len == 0)
             return 0;
 
-        bpf_probe_read_kernel(&data.fname, sizeof(data.fname), d_name.name);
         bpf_probe_read_kernel(&data.otype, sizeof(data.otype), OPRN);
         bpf_probe_read_user(&data.pname, sizeof(data.pname), (void *)processname);
         bpf_get_current_comm(&data.comm, sizeof(data.comm));
         data.pid = bpf_get_current_pid_tgid();
         data.uid = bpf_get_current_uid_gid();
 
+        // Loops and create file path
+        struct dentry *parent = curr_task->fs->root.dentry;
+        int max_depth = 1000;
+        while(max_depth && de != parent){
+            send_to_perf(ctx, de->d_name.name, &data);
+            de = de->d_parent;
+
+            max_depth -= 1;
+        }
+
+        data.status = COMPLETE;
         events.perf_submit(ctx, &data, sizeof(data));
         return 0;
 }

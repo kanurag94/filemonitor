@@ -1,6 +1,7 @@
 #!/usr/bin/python
 
 from __future__ import print_function
+from collections import defaultdict
 import json
 from bcc import BPF
 from ctypes import c_uint32
@@ -11,12 +12,19 @@ import subprocess
 sys.path.append('/usr/local/etc/filemonitor/cli.py')
 import cli
 
+class Status(object):
+    LOOPING = 0
+    COMPLETE = 1
+
+argv = defaultdict(list)
+
 BPF_C_PROG = "filemonitor.c"
 
 # initialize global variables
 def init():
     global BPF_C_PROG
     try:
+        return
         if(open("/usr/local/etc/filemonitor/filemonitor.c")):
             BPF_C_PROG = "/usr/local/etc/filemonitor/filemonitor.c"
     except:
@@ -62,14 +70,25 @@ def main():
             b.attach_kprobe(event="vfs_unlink", fn_name="trace_delete")
 
         # header
-        print("%-6s %-4s %-4s %-32s %-32s %-32s %-4s" % ("PID", "UID", "CPU", "PROC", "FPATH", "COMM", "OPRN"))
+        print("%-6s %-4s %-4s %-6s %-16s %-6s %-32s" % ("PID", "UID", "CPU", "OPRN", "PROC", "COMM", "FPATH"))
 
         # process event
         def print_event(cpu, data, size):
             event = b["events"].event(data)
-            print("%-6d %-4d %-4d %-32s %-32s %-32s %-4s" % (event.pid, event.uid, cpu,
-                event.pname.decode('utf-8', 'replace'), event.fname.decode('utf-8', 'replace'),
-                event.comm.decode('utf-8', 'replace'), event.otype.decode('utf-8', 'replace')))
+
+            # Events has no knowledge the task is complete so let's append
+            if event.status == Status.LOOPING :
+                argv[event.pid].insert(0, event.fname)
+            elif event.status == Status.COMPLETE :
+                file_path = b'/'.join(argv[event.pid])
+                print("%-6d %-4d %-4d %-6s %-16s %-6s %-32s" % (event.pid, event.uid, cpu,
+                    event.otype.decode('utf-8', 'replace'), event.pname.decode('utf-8', 'replace'),
+                    event.comm.decode('utf-8', 'replace'), file_path.decode('utf-8', 'replace')))
+                try:
+                    del(argv[event.pid])
+                except Exception:
+                    pass
+
 
         b["events"].open_perf_buffer(print_event)
         while 1:
